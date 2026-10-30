@@ -10,3 +10,6 @@ orientation = portrait
 fullscreen = 0
 android.archs = arm64-v8a
 android.accept_sdk_license = True
+android.ndk = 25b
+android.api = 34
+android.minapi = 21
