@@ -1,8 +1,11 @@
 import os
+import sys
 import sqlite3
+import traceback
 from datetime import datetime
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -19,25 +22,29 @@ class GraphWidget(Widget):
     """Виджет для отрисовки графика динамики давления и пульса на Canvas."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.data = []  # Список кортежей: (dt_str, sys, dia, pulse)
+        self.data = []
         self.bind(pos=self.draw_graph, size=self.draw_graph)
 
     def set_data(self, data):
-        # Берем последние 12 измерений для читаемости на экране телефона
         self.data = data[-12:]
         self.draw_graph()
 
     def _draw_text(self, text, x, y, font_size=11, color=(0.85, 0.85, 0.85, 1)):
-        label = CoreLabel(text=str(text), font_size=sp(font_size), color=color)
-        label.refresh()
-        texture = label.texture
-        Rectangle(texture=texture, pos=(x, y), size=texture.size)
-        return texture.size
+        try:
+            lbl = CoreLabel(text=str(text), font_size=sp(font_size))
+            lbl.refresh()
+            tex = lbl.texture
+            if tex:
+                Color(*color)
+                Rectangle(texture=tex, pos=(x, y), size=tex.size)
+                return tex.size
+        except Exception as e:
+            print(f"Text render error: {e}")
+        return (0, 0)
 
     def draw_graph(self, *args):
         self.canvas.clear()
         with self.canvas:
-            # Фон графика
             Color(0.14, 0.15, 0.18, 1)
             Rectangle(pos=self.pos, size=self.size)
 
@@ -63,7 +70,6 @@ class GraphWidget(Widget):
             x0 = self.x + pad_left
             y0 = self.y + pad_bottom
 
-            # Вычисляем минимум и максимум по шкале Y
             all_vals = []
             for _, sys_v, dia_v, pulse_v in self.data:
                 all_vals.extend([sys_v, dia_v, pulse_v])
@@ -72,7 +78,6 @@ class GraphWidget(Widget):
             max_val = (max(all_vals) // 10) * 10 + 20
             val_range = max(max_val - min_val, 10)
 
-            # Горизонтальная сетка и подписи оси Y
             steps = 5
             for i in range(steps + 1):
                 val = int(min_val + (val_range / steps) * i)
@@ -81,7 +86,6 @@ class GraphWidget(Widget):
                 Line(points=[x0, y, x0 + plot_w, y], width=1)
                 self._draw_text(str(val), self.x + dp(6), y - dp(7), font_size=10)
 
-            # Легенда сверху
             legend_y = self.top - dp(22)
             self._draw_text("■ Верхнее", x0, legend_y, font_size=11, color=(1, 0.35, 0.35, 1))
             self._draw_text("■ Нижнее", x0 + dp(85), legend_y, font_size=11, color=(0.3, 0.65, 1, 1))
@@ -106,7 +110,6 @@ class GraphWidget(Widget):
                 dia_pts.extend([dx, dy])
                 pulse_pts.extend([px, py])
 
-                # Подпись даты/времени по оси X (прореживаем, если точек много)
                 if n <= 6 or i % 2 == 0 or i == n - 1:
                     try:
                         dt_obj = datetime.strptime(dt_iso, "%Y-%m-%d %H:%M")
@@ -115,7 +118,6 @@ class GraphWidget(Widget):
                         short_dt = dt_iso[-5:]
                     self._draw_text(short_dt, sx - dp(14), self.y + dp(4), font_size=9)
 
-            # Линии графиков
             if n > 1:
                 Color(1, 0.35, 0.35, 1)
                 Line(points=sys_pts, width=dp(1.8))
@@ -124,22 +126,18 @@ class GraphWidget(Widget):
                 Color(0.3, 0.9, 0.5, 1)
                 Line(points=pulse_pts, width=dp(1.5))
 
-            # Точки и значения над ними
             r = dp(4)
             for i in range(n):
-                # Верхнее давление
                 Color(1, 0.35, 0.35, 1)
                 sx, sy = sys_pts[2 * i], sys_pts[2 * i + 1]
                 Ellipse(pos=(sx - r, sy - r), size=(r * 2, r * 2))
                 self._draw_text(self.data[i][1], sx - dp(8), sy + dp(4), font_size=9, color=(1, 0.5, 0.5, 1))
 
-                # Нижнее давление
                 Color(0.3, 0.65, 1, 1)
                 dx, dy = dia_pts[2 * i], dia_pts[2 * i + 1]
                 Ellipse(pos=(dx - r, dy - r), size=(r * 2, r * 2))
                 self._draw_text(self.data[i][2], dx - dp(8), dy + dp(4), font_size=9, color=(0.5, 0.8, 1, 1))
 
-                # Пульс
                 Color(0.3, 0.9, 0.5, 1)
                 px, py = pulse_pts[2 * i], pulse_pts[2 * i + 1]
                 Ellipse(pos=(px - r, py - r), size=(r * 2, r * 2))
@@ -149,16 +147,14 @@ class GraphWidget(Widget):
 class BPTrackerApp(App):
     def build(self):
         self.title = "Дневник давления и пульса"
-        self.init_db()
 
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
 
         # --- Блок ввода давления и пульса ---
         inputs_grid = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(70))
-
-        self.sys_input = self._create_num_input("Верхнее\n(например, 120)")
-        self.dia_input = self._create_num_input("Нижнее\n(например, 80)")
-        self.pulse_input = self._create_num_input("Пульс\n(например, 70)")
+        self.sys_input = self._create_num_input("Верхнее\n(120)")
+        self.dia_input = self._create_num_input("Нижнее\n(80)")
+        self.pulse_input = self._create_num_input("Пульс\n(70)")
 
         inputs_grid.add_widget(self.sys_input)
         inputs_grid.add_widget(self.dia_input)
@@ -168,7 +164,7 @@ class BPTrackerApp(App):
         # --- Переключатель режима даты и времени ---
         mode_box = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
         self.auto_btn = ToggleButton(
-            text="Время: Авто (системное)",
+            text="Время: Авто",
             group="dt_mode",
             state="down",
             font_size=sp(13)
@@ -223,7 +219,7 @@ class BPTrackerApp(App):
             text="Удалить последнюю",
             size_hint_x=0.55,
             background_color=(0.8, 0.3, 0.3, 1),
-            font_size=sp(13)
+            font_size=sp(12)
         )
         del_btn.bind(on_press=self.delete_last_record)
 
@@ -245,8 +241,19 @@ class BPTrackerApp(App):
         self.graph = GraphWidget(size_hint_y=1)
         root.add_widget(self.graph)
 
-        self.load_data()
         return root
+
+    def on_start(self):
+        # Инициализируем базу данных и загружаем график только когда окно полностью готово
+        Clock.schedule_once(self._post_init, 0.1)
+
+    def _post_init(self, dt):
+        try:
+            self.init_db()
+            self.load_data()
+        except Exception as e:
+            self.status_label.text = f"Ошибка инициализации: {e}"
+            self.status_label.color = (1, 0.2, 0.2, 1)
 
     def _create_num_input(self, hint):
         return TextInput(
@@ -259,8 +266,10 @@ class BPTrackerApp(App):
         )
 
     def get_db_path(self):
-        # user_data_dir гарантирует корректные права доступа к БД на Android
-        return os.path.join(self.user_data_dir, "bp_records.db")
+        db_dir = self.user_data_dir
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, "bp_records.db")
 
     def init_db(self):
         with sqlite3.connect(self.get_db_path()) as conn:
@@ -275,7 +284,6 @@ class BPTrackerApp(App):
             """)
 
     def update_dt_mode(self, instance):
-        # Не даем отжать обе кнопки в группе
         if self.auto_btn.state == "normal" and self.manual_btn.state == "normal":
             instance.state = "down"
 
@@ -294,13 +302,13 @@ class BPTrackerApp(App):
         pulse_txt = self.pulse_input.text.strip()
 
         if not (sys_txt and dia_txt and pulse_txt):
-            self.status_label.text = "Ошибка: заполните верхнее, нижнее давление и пульс!"
+            self.status_label.text = "Ошибка: заполните все поля давления и пульса!"
             self.status_label.color = (1, 0.4, 0.4, 1)
             return
 
         sys_val, dia_val, pulse_val = int(sys_txt), int(dia_txt), int(pulse_txt)
         if not (40 <= sys_val <= 300 and 30 <= dia_val <= 200 and 30 <= pulse_val <= 250):
-            self.status_label.text = "Ошибка: проверьте реалистичность введенных значений!"
+            self.status_label.text = "Ошибка: проверьте реалистичность значений!"
             self.status_label.color = (1, 0.4, 0.4, 1)
             return
 
@@ -340,3 +348,29 @@ class BPTrackerApp(App):
             row = cur.fetchone()
             if row:
                 conn.execute("DELETE FROM records WHERE id = ?", (row[0],))
+                self.status_label.text = "Последняя добавленная запись удалена."
+                self.status_label.color = (1, 0.8, 0.4, 1)
+            else:
+                self.status_label.text = "База данных уже пуста."
+                self.status_label.color = (0.8, 0.8, 0.8, 1)
+        self.load_data()
+
+    def load_data(self):
+        with sqlite3.connect(self.get_db_path()) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT dt_iso, sys, dia, pulse FROM records ORDER BY dt_iso ASC")
+            rows = cur.fetchall()
+        self.graph.set_data(rows)
+
+
+if __name__ == "__main__":
+    try:
+        BPTrackerApp().run()
+    except Exception:
+        # При аварии пишем трассировку в файл и в stderr для logcat
+        traceback.print_exc()
+        try:
+            with open(os.path.expanduser("~/bp_crash.log"), "w") as f:
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
